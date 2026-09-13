@@ -7,14 +7,12 @@ enum ScanAngle { front, side, back }
 class LiveMeasurementOverlay extends StatefulWidget {
   final ScanAngle currentAngle;
   final double userHeightCm;
-  final bool isAligned;
   final FrameAnalysisResult? analysisResult;
 
   const LiveMeasurementOverlay({
     super.key,
     required this.currentAngle,
     required this.userHeightCm,
-    required this.isAligned,
     this.analysisResult,
   });
 
@@ -79,6 +77,11 @@ class _LiveMeasurementOverlayState extends State<LiveMeasurementOverlay>
             final ws = result.waist;
             final hp = result.hips;
 
+            // Side view: the torso's horizontal extent is its depth, measured
+            // from the actual side-view pose — never a faked multiplier.
+            final sideChestDepth = result.sideDepths?['chest'];
+            final sideWaistDepth = result.sideDepths?['waist'];
+
             return Stack(
               children: [
                 // Shoulder Caliper Tag
@@ -96,7 +99,7 @@ class _LiveMeasurementOverlayState extends State<LiveMeasurementOverlay>
                     top: (ch.yRatio * h) - 12,
                     left: mathClamp((ch.rightXRatio * w) + 6, 10, w - 130),
                     label: widget.currentAngle == ScanAngle.side
-                        ? 'CHEST DEPTH: ${(ch.valueCm * 0.68).toStringAsFixed(1)} cm'
+                        ? 'CHEST DEPTH: ${(sideChestDepth ?? ch.valueCm).toStringAsFixed(1)} cm'
                         : 'CHEST WIDTH: ${ch.valueCm.toStringAsFixed(1)} cm',
                     isAligned: isAligned,
                   ),
@@ -107,7 +110,7 @@ class _LiveMeasurementOverlayState extends State<LiveMeasurementOverlay>
                     top: (ws.yRatio * h) - 12,
                     left: mathClamp((ws.rightXRatio * w) + 6, 10, w - 130),
                     label: widget.currentAngle == ScanAngle.side
-                        ? 'WAIST DEPTH: ${(ws.valueCm * 0.72).toStringAsFixed(1)} cm'
+                        ? 'WAIST DEPTH: ${(sideWaistDepth ?? ws.valueCm).toStringAsFixed(1)} cm'
                         : 'WAIST WIDTH: ${ws.valueCm.toStringAsFixed(1)} cm',
                     isAligned: isAligned,
                   ),
@@ -286,16 +289,21 @@ class _DynamicCaliperPainter extends CustomPainter {
     if (result.hasFullBody) {
       final feetY = (result.feetYRatio ?? 0.86) * h;
       final footPaint = Paint()
-        ..color = isAligned ? Colors.greenAccent.withValues(alpha: 0.6) : Colors.white24
+        ..color = isAligned
+            ? Colors.greenAccent.withValues(alpha: 0.6)
+            : Colors.white24
         ..strokeWidth = 2.0;
-      canvas.drawLine(Offset(cx - 70, feetY), Offset(cx + 70, feetY), footPaint);
+      canvas.drawLine(
+          Offset(cx - 70, feetY), Offset(cx + 70, feetY), footPaint);
     }
   }
 
   void _drawTicks(Canvas canvas, Offset p1, Offset p2, Paint paint) {
     const tickLen = 8.0;
-    canvas.drawLine(Offset(p1.dx, p1.dy - tickLen), Offset(p1.dx, p1.dy + tickLen), paint);
-    canvas.drawLine(Offset(p2.dx, p2.dy - tickLen), Offset(p2.dx, p2.dy + tickLen), paint);
+    canvas.drawLine(
+        Offset(p1.dx, p1.dy - tickLen), Offset(p1.dx, p1.dy + tickLen), paint);
+    canvas.drawLine(
+        Offset(p2.dx, p2.dy - tickLen), Offset(p2.dx, p2.dy + tickLen), paint);
   }
 
   @override

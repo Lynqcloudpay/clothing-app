@@ -10,7 +10,6 @@ import '../../../config/theme/app_spacing.dart';
 import '../../../config/theme/app_typography.dart';
 import '../../../config/constants/app_strings.dart';
 import '../../../core/providers/scan_provider.dart';
-import '../../../core/services/body_measurement_engine.dart';
 import '../../../core/widgets/gradient_button.dart';
 import '../widgets/measurement_card.dart';
 
@@ -20,8 +19,59 @@ class ScanResultsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(scanSessionProvider);
-    final measurements = session.measurements ??
-        BodyMeasurementEngine.computeMeasurements(heightCm: 178.0);
+    final measurements = session.measurements;
+
+    // No canned fallback: without a real completed scan there is nothing
+    // honest to show. Offer a rescan instead of fabricating numbers.
+    if (measurements == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text(AppStrings.scanResultsTitle),
+          automaticallyImplyLeading: false,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () => context.go(RoutePaths.feed),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.xl),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(
+                  Icons.person_search_rounded,
+                  size: 72,
+                  color: AppColors.primaryGold,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  'No scan data yet',
+                  textAlign: TextAlign.center,
+                  style: AppTypography.titleLarge,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Complete a body scan to see your measurements here.',
+                  textAlign: TextAlign.center,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                GradientButton(
+                  label: AppStrings.scanStartButton,
+                  onPressed: () => context.go(RoutePaths.scanPrepare),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -49,8 +99,10 @@ class ScanResultsScreen extends ConsumerWidget {
                     radius: 0.9,
                     colors: [Color(0xFF161B26), AppColors.backgroundPrimary],
                   ),
-                  borderRadius: BorderRadius.circular(AppSpacing.borderRadiusLg),
-                  border: Border.all(color: AppColors.primaryGold.withValues(alpha: 0.2)),
+                  borderRadius:
+                      BorderRadius.circular(AppSpacing.borderRadiusLg),
+                  border: Border.all(
+                      color: AppColors.primaryGold.withValues(alpha: 0.2)),
                 ),
                 child: Stack(
                   alignment: Alignment.center,
@@ -63,18 +115,22 @@ class ScanResultsScreen extends ConsumerWidget {
                       top: 14,
                       left: 14,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.black54,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.primaryGold.withValues(alpha: 0.3)),
+                          border: Border.all(
+                              color:
+                                  AppColors.primaryGold.withValues(alpha: 0.3)),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.view_in_ar, size: 14, color: AppColors.primaryGold),
+                            const Icon(Icons.view_in_ar,
+                                size: 14, color: AppColors.primaryGold),
                             const SizedBox(width: 6),
                             Text(
-                              '3D DIGITAL TWIN',
+                              'BODY MAP',
                               style: AppTypography.bodySmall.copyWith(
                                 color: AppColors.primaryGold,
                                 fontSize: 10,
@@ -90,7 +146,7 @@ class ScanResultsScreen extends ConsumerWidget {
                     Positioned(
                       bottom: 12,
                       child: Text(
-                        'DRAG TO ROTATE 360°',
+                        'SCAN VISUALIZATION',
                         style: AppTypography.bodySmall.copyWith(
                           color: AppColors.textTertiary,
                           fontSize: 9,
@@ -109,8 +165,10 @@ class ScanResultsScreen extends ConsumerWidget {
                 padding: const EdgeInsets.all(AppSpacing.md),
                 decoration: BoxDecoration(
                   color: AppColors.primaryGold.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(AppSpacing.borderRadiusMd),
-                  border: Border.all(color: AppColors.primaryGold.withValues(alpha: 0.3)),
+                  borderRadius:
+                      BorderRadius.circular(AppSpacing.borderRadiusMd),
+                  border: Border.all(
+                      color: AppColors.primaryGold.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [

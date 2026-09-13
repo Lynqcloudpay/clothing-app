@@ -46,7 +46,7 @@ class _ARCameraViewState extends State<ARCameraView>
             painter: _PerspectiveGridPainter(),
           ),
 
-          // 2. Animated LiDAR Scan Laser
+          // 2. Animated scan laser sweep
           AnimatedBuilder(
             animation: _laserPosition,
             builder: (context, child) {
@@ -65,7 +65,8 @@ class _ARCameraViewState extends State<ARCameraView>
               decoration: BoxDecoration(
                 color: Colors.black54,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.primaryGold.withValues(alpha: 0.4)),
+                border: Border.all(
+                    color: AppColors.primaryGold.withValues(alpha: 0.4)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -80,7 +81,7 @@ class _ARCameraViewState extends State<ARCameraView>
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'LiDAR / TrueDepth Active',
+                    'Pose Tracking Active',
                     style: AppTypography.bodySmall.copyWith(
                       color: Colors.white,
                       fontSize: 11,

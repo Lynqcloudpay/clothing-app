@@ -27,3 +27,9 @@ final scanSessionProvider =
     StateNotifierProvider<ScanNotifier, BodyScanSession>((ref) {
   return ScanNotifier();
 });
+
+/// The user's height in centimeters, entered on the scan preparation screen.
+///
+/// Real user input — replaces the previously hardcoded 178 cm — used to
+/// calibrate camera pixel measurements to real-world centimeters.
+final userHeightCmProvider = StateProvider<double>((ref) => 175.0);

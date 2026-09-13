@@ -2,3 +2,6 @@
 String? getLiveVisionJson() {
   return null;
 }
+
+/// No-op on non-web platforms.
+void setWebVisionHeightCm(double cm) {}

@@ -9,11 +9,17 @@ import '../../../config/theme/app_spacing.dart';
 
 class LiveCameraPreview extends StatefulWidget {
   final Function(CameraController controller)? onCameraReady;
+
+  /// Called right before the current controller is disposed or replaced
+  /// (camera switch, app backgrounding) so the parent can stop its image
+  /// stream first. Starting a stream on a disposed controller throws.
+  final VoidCallback? onCameraDisposing;
   final bool mirror;
 
   const LiveCameraPreview({
     super.key,
     this.onCameraReady,
+    this.onCameraDisposing,
     this.mirror = true,
   });
 
@@ -21,7 +27,8 @@ class LiveCameraPreview extends StatefulWidget {
   State<LiveCameraPreview> createState() => _LiveCameraPreviewState();
 }
 
-class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindingObserver {
+class _LiveCameraPreviewState extends State<LiveCameraPreview>
+    with WidgetsBindingObserver {
   CameraController? _controller;
   List<CameraDescription>? _cameras;
   bool _isInitializing = true;
@@ -38,6 +45,7 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.onCameraDisposing?.call();
     _controller?.dispose();
     super.dispose();
   }
@@ -50,7 +58,9 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
     }
 
     if (state == AppLifecycleState.inactive) {
+      widget.onCameraDisposing?.call();
       cameraController.dispose();
+      _controller = null;
     } else if (state == AppLifecycleState.resumed) {
       _initCamera();
     }
@@ -82,12 +92,19 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
     } catch (e) {
       setState(() {
         _isInitializing = false;
-        _errorMessage = 'Camera access error: ${e.toString().split('\n').first}';
+        _errorMessage =
+            'Camera access error: ${e.toString().split('\n').first}';
       });
     }
   }
 
   Future<void> _setupController(CameraDescription cameraDescription) async {
+    // Let the parent stop any image stream on the old controller before we
+    // replace it.
+    widget.onCameraDisposing?.call();
+    await _controller?.dispose();
+    _controller = null;
+
     final controller = CameraController(
       cameraDescription,
       ResolutionPreset.high,
@@ -111,7 +128,8 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
       if (mounted) {
         setState(() {
           _isInitializing = false;
-          _errorMessage = 'Failed to start camera. Please ensure permissions are granted.';
+          _errorMessage =
+              'Failed to start camera. Please ensure permissions are granted.';
         });
       }
     }
@@ -145,9 +163,12 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
       );
     }
 
-    final isWebInsecure = kIsWeb && Uri.base.scheme == 'http' && Uri.base.host != 'localhost';
+    final isWebInsecure =
+        kIsWeb && Uri.base.scheme == 'http' && Uri.base.host != 'localhost';
 
-    if (_errorMessage != null || _controller == null || !_controller!.value.isInitialized) {
+    if (_errorMessage != null ||
+        _controller == null ||
+        !_controller!.value.isInitialized) {
       return Container(
         color: const Color(0xFF0D1117),
         padding: const EdgeInsets.all(AppSpacing.xl),
@@ -158,25 +179,34 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: (isWebInsecure ? AppColors.primaryGold : Colors.redAccent).withValues(alpha: 0.15),
+                  color:
+                      (isWebInsecure ? AppColors.primaryGold : Colors.redAccent)
+                          .withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isWebInsecure ? Icons.lock_open_rounded : Icons.videocam_off_rounded,
-                  color: isWebInsecure ? AppColors.primaryGold : Colors.redAccent,
+                  isWebInsecure
+                      ? Icons.lock_open_rounded
+                      : Icons.videocam_off_rounded,
+                  color:
+                      isWebInsecure ? AppColors.primaryGold : Colors.redAccent,
                   size: 40,
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                isWebInsecure ? 'Secure Camera Access Required' : 'Camera Feed Not Available',
-                style: AppTypography.titleMedium.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                isWebInsecure
+                    ? 'Secure Camera Access Required'
+                    : 'Camera Feed Not Available',
+                style: AppTypography.titleMedium
+                    .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: AppSpacing.sm),
               Text(
                 isWebInsecure
                     ? 'Apple iOS Safari requires HTTPS (secure connection) to unlock the camera on your iPhone over Wi-Fi.'
-                    : (_errorMessage ?? 'Please allow camera permissions in your browser or device settings.'),
+                    : (_errorMessage ??
+                        'Please allow camera permissions in your browser or device settings.'),
                 textAlign: TextAlign.center,
                 style: AppTypography.bodySmall.copyWith(color: Colors.white70),
               ),
@@ -194,7 +224,8 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryGold,
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 14),
                     textStyle: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 )
@@ -220,7 +251,8 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
     // Mirror preview if front camera
     if (widget.mirror &&
         _cameras != null &&
-        _cameras![_selectedCameraIndex].lensDirection == CameraLensDirection.front) {
+        _cameras![_selectedCameraIndex].lensDirection ==
+            CameraLensDirection.front) {
       preview = Transform(
         alignment: Alignment.center,
         transform: Matrix4.rotationY(3.14159), // Flip horizontally
@@ -237,10 +269,12 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
             fit: BoxFit.contain,
             child: SizedBox(
               width: _controller!.value.previewSize != null
-                  ? math.min(_controller!.value.previewSize!.width, _controller!.value.previewSize!.height)
+                  ? math.min(_controller!.value.previewSize!.width,
+                      _controller!.value.previewSize!.height)
                   : 720,
               height: _controller!.value.previewSize != null
-                  ? math.max(_controller!.value.previewSize!.width, _controller!.value.previewSize!.height)
+                  ? math.max(_controller!.value.previewSize!.width,
+                      _controller!.value.previewSize!.height)
                   : 1280,
               child: preview,
             ),
@@ -260,7 +294,8 @@ class _LiveCameraPreviewState extends State<LiveCameraPreview> with WidgetsBindi
                   color: Colors.black54,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white, size: 22),
+                child: const Icon(Icons.flip_camera_ios_rounded,
+                    color: Colors.white, size: 22),
               ),
             ),
           ),

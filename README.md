@@ -1,9 +1,9 @@
 # ThreadSense 🧵✨
 
-An AI-powered styling app that leverages the device camera to perform highly accurate 3D body scans, extracts precise measurements, and recommends currently trending clothing tailored to the user's exact body type.
+An AI-powered styling app that uses the device camera and on-device pose estimation to estimate body measurements for garment fitting, and recommends currently trending clothing tailored to the user's body type.
 
 ## Core Features
-1. **3D Body Scanning**: Uses ARKit/ARCore and Google ML Kit for robust pose estimation and depth mapping to construct a millimeter-accurate 3D avatar.
+1. **Body Scanning**: Uses Google ML Kit pose estimation on live camera frames to estimate body measurements. Widths are measured from landmark geometry and calibrated to real-world scale using your height; front/back views are averaged and a side view supplies torso depth for ellipse-based circumference estimates. These are estimates for garment fitting, not medical-grade measurements.
 2. **AI Recommendation Engine**: Vertex AI / Gemini integration matches trending garments scraped from top fashion retailers directly to the user's specific body type and fit preferences.
 3. **Immersive Social Feed**: A TikTok-style vertical scrolling feed featuring interactive outfit cards and personalized size recommendations.
 4. **Premium Design**: Dark-mode-first aesthetic with smooth glassmorphism, animated gradients, and 60fps micro-interactions using Flutter Animate.

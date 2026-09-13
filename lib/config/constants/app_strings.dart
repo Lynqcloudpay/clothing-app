@@ -7,8 +7,7 @@ class AppStrings {
 
   // ─── App ───────────────────────────────────────────────────────────
   static const String appName = 'ThreadSense';
-  static const String appTagline =
-      'Your body. Your style. Perfectly matched.';
+  static const String appTagline = 'Your body. Your style. Perfectly matched.';
 
   // ─── Onboarding ────────────────────────────────────────────────────
   static const String onboardingTitle1 = 'Scan Your Body in Seconds';
@@ -33,7 +32,7 @@ class AppStrings {
       'Required to scan your body and take measurements';
   static const String permMotion = 'Motion & Orientation';
   static const String permMotionDesc =
-      'Helps create an accurate 3D model as you turn';
+      'Helps keep the scan aligned as you turn';
   static const String permMicrophone = 'Microphone';
   static const String permMicrophoneDesc =
       'Enables voice-guided scanning for a hands-free experience';
@@ -76,24 +75,19 @@ class AppStrings {
   // ─── Scan Voice Prompts ────────────────────────────────────────────
   static const String voiceAligning =
       'Step into the outline and stand naturally.';
-  static const String voiceFrontScan =
-      'Hold still. Capturing front view.';
+  static const String voiceFrontScan = 'Hold still. Capturing front view.';
   static const String voiceTurnLeft = 'Now slowly turn to your left.';
-  static const String voiceTurnBack =
-      'Hold still. Capturing back view.';
+  static const String voiceTurnBack = 'Hold still. Capturing back view.';
   static const String voiceTurnRight =
       'Almost done! Turn to face the camera again.';
   static const String voiceProcessing = 'Processing your scan.';
-  static const String voiceComplete =
-      'Scan complete! Let\'s see your results.';
+  static const String voiceComplete = 'Scan complete! Let\'s see your results.';
 
   // ─── Scan Error Prompts ────────────────────────────────────────────
   static const String errorTooDark =
       'It\'s too dark. Try turning on more lights.';
-  static const String errorTooFar =
-      'You\'re too far away. Please step closer.';
-  static const String errorTooClose =
-      'You\'re too close. Please step back.';
+  static const String errorTooFar = 'You\'re too far away. Please step closer.';
+  static const String errorTooClose = 'You\'re too close. Please step back.';
   static const String errorBodyCutOff =
       'Your full body isn\'t visible. Adjust your position.';
   static const String errorMovingTooFast = 'Please move more slowly.';

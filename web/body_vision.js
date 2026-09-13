@@ -1,188 +1,307 @@
-// ThreadSense Real-Time Computer Vision & Body Landmark Engine
-// Optimized for mobile: Supports both Torso (Chest/Waist/Hips) and Full-Body Framing
+// ThreadSense web vision bridge: real pixel-contour body measurement.
+//
+// HONEST BY DESIGN — this bridge never fabricates:
+// - It starts with NO person detected. A person is only reported when
+//   strong body/background edges are actually found in the <video> frame.
+// - Confidence reflects measured edge strength + temporal stability.
+//   It is never driven by a timer.
+// - Centimeter values are calibrated from the user's real height:
+//       cmPerPixel = userHeightCm / pixelStature (head-to-foot in frame).
+//   The height is pushed from Dart via setThreadSenseUserHeightCm().
+//   Without a valid stature or height, NO cm values are emitted —
+//   the Dart side treats missing cm as invalid data, not as a guess.
+// - This is a best-effort contour estimate for garment fitting, not a
+//   precise measurement. Single-camera edge detection cannot see true
+//   body contours through loose clothing or cluttered backgrounds.
 
-(function() {
-  console.log('[ThreadSense Vision] Initializing adaptive body tracking engine...');
+(function () {
+  'use strict';
+
+  // Calibrated by Dart (scan preparation screen requires height entry).
+  let userHeightCm = 0;
+  function setUserHeightCm(cm) {
+    const v = Number(cm);
+    userHeightCm = Number.isFinite(v) && v > 0 ? v : 0;
+  }
+  window.setThreadSenseUserHeightCm = setUserHeightCm;
+  if (typeof globalThis !== 'undefined') {
+    globalThis.setThreadSenseUserHeightCm = setUserHeightCm;
+  }
+
+  const PROC_W = 120;
+  const PROC_H = 160;
+  const GRAD_THRESHOLD = 28; // luminance edge strength that counts as a body edge
+  const MIN_ROWS_FOR_PERSON = 3; // of the 4 anatomical rows below
 
   let offscreenCanvas = null;
   let offscreenCtx = null;
   let lastFrameTime = 0;
-  let stabilityFrames = 0;
-  let lastCenter = 0.5;
-  let lastWidth = 0.5;
 
+  // Temporal state
+  let smoothGeo = null; // last good {shoulder,chest,waist,hips} -> {left,right}
+  let lastCenterX = 0.5;
+  let lastChestWidth = 0;
+  let stableFrames = 0;
+
+  // No person until vision proves otherwise.
   let currentVisionState = {
-    hasPerson: true,
-    hasFullBody: true,
+    hasPerson: false,
+    hasFullBody: false,
     isTooClose: false,
-    confidence: 0.70,
-    statusMessage: 'MEASURING BODY CONTOURS...',
-    landmarks: {
-      shoulder: { y: 0.22, leftX: 0.22, rightX: 0.78, cm: 46.5 },
-      chest: { y: 0.36, leftX: 0.25, rightX: 0.75, cm: 38.2 },
-      waist: { y: 0.50, leftX: 0.29, rightX: 0.71, cm: 31.4 },
-      hips: { y: 0.64, leftX: 0.26, rightX: 0.74, cm: 36.8 },
-      headY: 0.10,
-      feetY: 0.90,
-      centerX: 0.5,
-      bodyWidth: 0.50
-    }
+    isCutOffTop: false,
+    isCutOffBottom: false,
+    confidence: 0,
+    statusMessage: 'POSITION YOURSELF IN FRAME',
+    landmarks: null,
   };
 
   function findVideoElement() {
     return document.querySelector('video');
   }
 
+  function luminanceAt(data, x, y) {
+    const i = (y * PROC_W + x) * 4;
+    return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+
+  // Scans one horizontal row outward from the frame center and returns the
+  // first strong body/background edge on each side. found=false when no
+  // real edge exists (e.g. empty background) — never a guessed default.
+  function scanRow(data, targetY) {
+    const y = Math.max(1, Math.min(PROC_H - 2, Math.round(targetY * PROC_H)));
+    const midX = Math.round(PROC_W / 2);
+    let leftX = -1;
+    let rightX = -1;
+    let maxGrad = 0;
+
+    for (let x = midX; x >= 2; x--) {
+      const g = Math.abs(luminanceAt(data, x, y) - luminanceAt(data, x - 1, y));
+      if (g > maxGrad) maxGrad = g;
+      if (g > GRAD_THRESHOLD) {
+        leftX = x;
+        break;
+      }
+    }
+    for (let x = midX; x < PROC_W - 2; x++) {
+      const g = Math.abs(luminanceAt(data, x, y) - luminanceAt(data, x + 1, y));
+      if (g > maxGrad) maxGrad = g;
+      if (g > GRAD_THRESHOLD) {
+        rightX = x;
+        break;
+      }
+    }
+    const found = leftX > 0 && rightX > 0 && rightX > leftX;
+    const width = found ? (rightX - leftX) / PROC_W : 0;
+    return {
+      found: found,
+      left: leftX / PROC_W,
+      right: rightX / PROC_W,
+      width: width,
+      strength: Math.min(1, maxGrad / (GRAD_THRESHOLD * 3)),
+    };
+  }
+
+  // Vertical scan at the torso center for head (top-down) and feet
+  // (bottom-up), giving pixel stature for height calibration.
+  function scanStature(data, centerXRatio) {
+    const x =
+      Math.max(1, Math.min(PROC_W - 2, Math.round(centerXRatio * PROC_W)));
+    let headY = -1;
+    let feetY = -1;
+    for (let y = 2; y < PROC_H - 2; y++) {
+      const g = Math.abs(luminanceAt(data, x, y) - luminanceAt(data, x, y - 1));
+      if (g > GRAD_THRESHOLD) {
+        headY = y;
+        break;
+      }
+    }
+    for (let y = PROC_H - 3; y >= 2; y--) {
+      const g = Math.abs(luminanceAt(data, x, y) - luminanceAt(data, x, y + 1));
+      if (g > GRAD_THRESHOLD) {
+        feetY = y;
+        break;
+      }
+    }
+    return { headY: headY, feetY: feetY };
+  }
+
   function analyzeVideoFrame() {
     requestAnimationFrame(analyzeVideoFrame);
 
     const now = performance.now();
-    if (now - lastFrameTime < 45) return; // ~22 FPS is rock-solid on mobile Safari
+    if (now - lastFrameTime < 120) return; // ~8 fps is plenty for contours
     lastFrameTime = now;
 
     const video = findVideoElement();
-    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+    if (
+      !video ||
+      video.readyState < 2 ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0
+    ) {
       return;
     }
 
-    const procW = 120;
-    const procH = 160;
-
     if (!offscreenCanvas) {
       offscreenCanvas = document.createElement('canvas');
-      offscreenCanvas.width = procW;
-      offscreenCanvas.height = procH;
-      offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+      offscreenCanvas.width = PROC_W;
+      offscreenCanvas.height = PROC_H;
+      offscreenCtx = offscreenCanvas.getContext('2d', {
+        willReadFrequently: true,
+      });
     }
 
     try {
-      offscreenCtx.drawImage(video, 0, 0, procW, procH);
-      const imgData = offscreenCtx.getImageData(0, 0, procW, procH);
-      const data = imgData.data;
+      offscreenCtx.drawImage(video, 0, 0, PROC_W, PROC_H);
+      const data = offscreenCtx.getImageData(0, 0, PROC_W, PROC_H).data;
 
-      // Scan horizontal contour widths at key anatomical heights:
-      // Shoulder (~22%), Chest (~36%), Waist (~50%), Hips (~64%)
-      function scanRowContour(targetY) {
-        const y = Math.round(targetY * procH);
-        const midX = Math.round(procW / 2);
-        
-        // Scan outward from center to left
-        let leftX = 0.15 * procW;
-        for (let x = midX; x >= 2; x--) {
-          const idx = (y * procW + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-          const prevIdx = (y * procW + (x - 1)) * 4;
-          const pr = data[prevIdx], pg = data[prevIdx + 1], pb = data[prevIdx + 2];
-          
-          // Edge gradient detection between body and background
-          const grad = Math.abs(r - pr) + Math.abs(g - pg) + Math.abs(b - pb);
-          const isSkin = (r > 65 && g > 45 && b > 30 && (r - g) > 8);
-          if (grad > 28 && !isSkin) {
-            leftX = x;
-            break;
-          }
-        }
+      const rows = [
+        scanRow(data, 0.22), // shoulders
+        scanRow(data, 0.36), // chest
+        scanRow(data, 0.5), // waist
+        scanRow(data, 0.64), // hips
+      ];
 
-        // Scan outward from center to right
-        let rightX = 0.85 * procW;
-        for (let x = midX; x < procW - 2; x++) {
-          const idx = (y * procW + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-          const nextIdx = (y * procW + (x + 1)) * 4;
-          const nr = data[nextIdx], ng = data[nextIdx + 1], nb = data[nextIdx + 2];
+      // Only human-plausible widths count: a "detection" spanning the whole
+      // frame or a sliver is background texture, not a person.
+      const validRows = rows.filter(
+        (r) => r.found && r.width > 0.12 && r.width < 0.8
+      );
+      const personDetected = validRows.length >= MIN_ROWS_FOR_PERSON;
 
-          const grad = Math.abs(r - nr) + Math.abs(g - ng) + Math.abs(b - nb);
-          const isSkin = (r > 65 && g > 45 && b > 30 && (r - g) > 8);
-          if (grad > 28 && !isSkin) {
-            rightX = x;
-            break;
-          }
-        }
-
-        // Bound to realistic ratios
-        const lRatio = Math.max(0.08, Math.min(0.40, leftX / procW));
-        const rRatio = Math.max(0.60, Math.min(0.92, rightX / procW));
-        return { left: lRatio, right: rRatio, width: rRatio - lRatio };
+      if (!personDetected) {
+        stableFrames = 0;
+        smoothGeo = null;
+        currentVisionState = {
+          hasPerson: false,
+          hasFullBody: false,
+          isTooClose: false,
+          isCutOffTop: false,
+          isCutOffBottom: false,
+          confidence: 0,
+          statusMessage: 'NO PERSON DETECTED — STEP INTO FRAME',
+          landmarks: null,
+        };
+        return;
       }
 
-      const shoulderContour = scanRowContour(0.22);
-      const chestContour = scanRowContour(0.36);
-      const waistContour = scanRowContour(0.50);
-      const hipsContour = scanRowContour(0.64);
+      const centerX = (rows[1].left + rows[1].right) / 2;
+      const chestWidth = rows[1].width;
 
-      const centerX = (chestContour.left + chestContour.right) / 2;
-      const currentWidth = chestContour.width;
+      const stature = scanStature(data, centerX);
+      const cutOffTop = stature.headY < 0;
+      const cutOffBottom = stature.feetY < 0;
+      const staturePx =
+        !cutOffTop && !cutOffBottom ? stature.feetY - stature.headY : 0;
+      const hasFullBody = staturePx > PROC_H * 0.5;
 
-      // Track hold stability
-      const centerDelta = Math.abs(centerX - lastCenter);
-      const widthDelta = Math.abs(currentWidth - lastWidth);
+      // Height calibration: real cm-per-pixel from the user's own height.
+      // No height or no measurable stature => no cm values, period.
+      const cmPerPx =
+        userHeightCm > 0 && staturePx > 0 ? userHeightCm / staturePx : 0;
 
-      if (centerDelta < 0.025 && widthDelta < 0.025) {
-        stabilityFrames = Math.min(45, stabilityFrames + 1);
+      // Temporal stability from actual frame-to-frame deltas.
+      const centerDelta = Math.abs(centerX - lastCenterX);
+      const widthDelta = Math.abs(chestWidth - lastChestWidth);
+      if (centerDelta < 0.03 && widthDelta < 0.03) {
+        stableFrames = Math.min(60, stableFrames + 1);
       } else {
-        stabilityFrames = Math.max(0, stabilityFrames - 1);
+        stableFrames = Math.max(0, stableFrames - 2);
       }
-      lastCenter = centerX;
-      lastWidth = currentWidth;
+      lastCenterX = centerX;
+      lastChestWidth = chestWidth;
 
-      // Calibrate realistic human body measurements based on detected contours
-      // Base user height reference: 178 cm
-      const chestWidthCm = Math.round((37.5 + ((chestContour.width - 0.50) * 16.0)) * 10) / 10;
-      const waistWidthCm = Math.round((30.5 + ((waistContour.width - 0.44) * 14.0)) * 10) / 10;
-      const hipsWidthCm = Math.round((36.0 + ((hipsContour.width - 0.48) * 14.0)) * 10) / 10;
-      const shoulderWidthCm = Math.round((46.0 + ((shoulderContour.width - 0.56) * 15.0)) * 10) / 10;
+      // EMA smoothing per row; a row with no edge this frame holds its
+      // last good contour instead of inventing one.
+      const alpha = 0.35;
+      const names = ['shoulder', 'chest', 'waist', 'hips'];
+      const geo = {};
+      names.forEach((name, i) => {
+        const r = rows[i];
+        const prev = smoothGeo ? smoothGeo[name] : null;
+        if (r.found) {
+          geo[name] = {
+            left: prev ? prev.left * (1 - alpha) + r.left * alpha : r.left,
+            right:
+              prev ? prev.right * (1 - alpha) + r.right * alpha : r.right,
+          };
+        } else if (prev) {
+          geo[name] = prev;
+        } else {
+          geo[name] = null;
+        }
+      });
+      smoothGeo = geo;
+      const complete = names.every((n) => geo[n] !== null);
 
-      // Dynamic confidence progression:
-      // Starts at 72% on detection, climbs smoothly to 100% as user holds still for ~1.2 seconds
-      const baseConf = 0.72;
-      const holdProgress = stabilityFrames / 28.0; // ~1.2 seconds to reach 100%
-      const confidence = Math.min(1.0, baseConf + (0.28 * holdProgress));
+      // Confidence from measured signal only: edge strength + stability.
+      // It never climbs on a timer — move and it drops.
+      const rowScore =
+        validRows.reduce((acc, r) => acc + r.strength, 0) / 4;
+      const stabilityScore = Math.min(1, stableFrames / 20);
+      const confidence = Math.max(
+        0,
+        Math.min(1, 0.2 + 0.55 * rowScore + 0.25 * stabilityScore)
+      );
 
-      let statusMsg = '';
-      if (confidence < 0.88) {
-        statusMsg = 'BODY DETECTED — HOLD STEADY TO LOCK IN';
-      } else if (confidence < 0.99) {
-        statusMsg = 'LOCKING CONTOURS... ' + Math.round(confidence * 100) + '%';
+      const tooClose = rows[1].width > 0.75 || rows[0].width > 0.75;
+      let statusMessage;
+      if (tooClose) {
+        statusMessage = 'TOO CLOSE — STEP BACK';
+      } else if (cutOffTop || cutOffBottom || !hasFullBody) {
+        statusMessage = 'MOVE TO FIT YOUR FULL BODY IN FRAME';
+      } else if (confidence < 0.6) {
+        statusMessage = 'HOLD STEADY — READING CONTOURS';
       } else {
-        statusMsg = '100% CONFIDENCE REACHED — PHOTO CAPTURED!';
+        statusMessage = 'HOLD STEADY — MEASURING';
+      }
+
+      function widthCm(name) {
+        const g = geo[name];
+        if (!g || cmPerPx <= 0) return null;
+        return Math.round((g.right - g.left) * PROC_W * cmPerPx * 10) / 10;
       }
 
       currentVisionState = {
         hasPerson: true,
-        hasFullBody: true, // Both Torso and Full-Body are 100% valid!
-        isTooClose: false,
+        hasFullBody: hasFullBody,
+        isTooClose: tooClose,
+        isCutOffTop: cutOffTop,
+        isCutOffBottom: cutOffBottom,
         confidence: Math.round(confidence * 100) / 100,
-        statusMessage: statusMsg,
-        landmarks: {
-          shoulder: {
-            y: 0.22,
-            leftX: shoulderContour.left,
-            rightX: shoulderContour.right,
-            cm: shoulderWidthCm
-          },
-          chest: {
-            y: 0.36,
-            leftX: chestContour.left,
-            rightX: chestContour.right,
-            cm: chestWidthCm
-          },
-          waist: {
-            y: 0.50,
-            leftX: waistContour.left,
-            rightX: waistContour.right,
-            cm: waistWidthCm
-          },
-          hips: {
-            y: 0.64,
-            leftX: hipsContour.left,
-            rightX: hipsContour.right,
-            cm: hipsWidthCm
-          },
-          headY: 0.08,
-          feetY: 0.92,
-          centerX: centerX,
-          bodyWidth: currentWidth
-        }
+        statusMessage: statusMessage,
+        landmarks: complete
+          ? {
+              shoulder: {
+                y: 0.22,
+                leftX: geo.shoulder.left,
+                rightX: geo.shoulder.right,
+                cm: widthCm('shoulder'),
+              },
+              chest: {
+                y: 0.36,
+                leftX: geo.chest.left,
+                rightX: geo.chest.right,
+                cm: widthCm('chest'),
+              },
+              waist: {
+                y: 0.5,
+                leftX: geo.waist.left,
+                rightX: geo.waist.right,
+                cm: widthCm('waist'),
+              },
+              hips: {
+                y: 0.64,
+                leftX: geo.hips.left,
+                rightX: geo.hips.right,
+                cm: widthCm('hips'),
+              },
+              headY: cutOffTop ? null : stature.headY / PROC_H,
+              feetY: cutOffBottom ? null : stature.feetY / PROC_H,
+              centerX: centerX,
+              bodyWidth: chestWidth,
+            }
+          : null,
       };
     } catch (e) {
       console.warn('[ThreadSense Vision] Frame error:', e);
@@ -191,12 +310,13 @@
 
   requestAnimationFrame(analyzeVideoFrame);
 
-  window.getThreadSenseVisionJson = function() {
+  function getVisionJson() {
     return JSON.stringify(currentVisionState);
-  };
+  }
+  window.getThreadSenseVisionJson = getVisionJson;
   if (typeof globalThis !== 'undefined') {
-    globalThis.getThreadSenseVisionJson = window.getThreadSenseVisionJson;
+    globalThis.getThreadSenseVisionJson = getVisionJson;
   }
 
-  console.log('[ThreadSense Vision] Adaptive Body Tracking ready.');
+  console.log('[ThreadSense Vision] Contour engine ready (no canned data).');
 })();
