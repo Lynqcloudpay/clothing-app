@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Auth helper
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // User profile: only the owner can read/write
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      
+      // Measurements subcollection
+      match /measurements/{measurementId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+    
+    // Global data: read-only for authenticated users
+    match /clothing_items/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only cloud functions can write
+    }
+    
+    match /size_charts/{brandId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}
